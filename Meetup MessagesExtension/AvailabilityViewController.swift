@@ -146,7 +146,7 @@ class AvailabilityViewController: UIViewController {
         let end     = cal.startOfDay(for: meetup.endDateRange)
         while current <= end {
             daysInRange.append(current)
-            dayStates[current] = .neutral
+            dayStates[current] = .available
             current = cal.date(byAdding: .day, value: 1, to: current)!
         }
     }
@@ -227,7 +227,7 @@ class AvailabilityViewController: UIViewController {
 
         guard !available.isEmpty else {
             showAlert(title: "No Availability",
-                      message: "Please tap at least one day to mark yourself as available (green).")
+                      message: "Please mark at least one day as available (green).")
             return
         }
 
@@ -327,7 +327,7 @@ extension AvailabilityViewController: UICollectionViewDataSource, UICollectionVi
         guard dayIndex >= 0 else { return }
 
         let date = daysInRange[dayIndex]
-        switch dayStates[date] ?? .neutral {
+        switch dayStates[date] ?? .available {
         case .neutral, .unavailable:
             dayStates[date] = .available
         case .available:
