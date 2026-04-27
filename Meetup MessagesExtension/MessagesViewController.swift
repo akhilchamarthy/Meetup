@@ -10,14 +10,27 @@ import Messages
 
 class MessagesViewController: MSMessagesAppViewController {
 
+    // MARK: - State
+
     private var currentViewController: UIViewController?
     private var activeMeetup: Meetup?
+
+    // Accumulated while stepping through the creation flow
     private var pendingMeetupTitle: String = ""
     private var pendingMeetupType: MeetupType = .hangout
 
+    // MARK: - Lifecycle
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        presentCreateMeetupFlow()
+        // Listen for back-navigation fired by child VCs
+        NotificationCenter.default.addObserver(self, selector: #selector(handleGoBack),
+                                               name: .meetupGoBack, object: nil)
+        presentWelcomeScreen()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - Conversation Handling
@@ -42,18 +55,28 @@ class MessagesViewController: MSMessagesAppViewController {
 
     // MARK: - Navigation
 
-    private func presentCreateMeetupFlow() {
-        let typeVC = MeetupTypeViewController()
-        typeVC.delegate = self
-        presentViewController(typeVC)
+    /// Step 1 — Welcome / name entry
+    private func presentWelcomeScreen() {
+        let vc = WelcomeViewController()
+        vc.delegate = self
+        transition(to: vc, direction: .left)
     }
 
+    /// Step 2 — Meetup type selection
+    private func presentTypeSelection(meetupTitle: String) {
+        let vc = MeetupTypeViewController(meetupTitle: meetupTitle)
+        vc.delegate = self
+        transition(to: vc, direction: .right)
+    }
+
+    /// Step 3 — Date/time range + duration
     private func presentDateTimeSelection(meetupTitle: String, meetupType: MeetupType) {
         let vc = DateTimeSelectionViewController(meetupTitle: meetupTitle, meetupType: meetupType)
         vc.delegate = self
-        presentViewController(vc)
+        transition(to: vc, direction: .right)
     }
 
+    /// After creation — availability picker
     private func presentAvailabilityInput(for meetup: Meetup) {
         let vc = AvailabilityViewController(
             meetup: meetup,
@@ -61,30 +84,66 @@ class MessagesViewController: MSMessagesAppViewController {
             currentUserName: getCurrentUserName()
         )
         vc.delegate = self
-        presentViewController(vc)
+        transition(to: vc, direction: .right)
     }
 
+    /// Final step — results
     private func presentResultsView(for meetup: Meetup) {
-        presentViewController(ResultsViewController(meetup: meetup))
+        transition(to: ResultsViewController(meetup: meetup), direction: .right)
     }
 
-    private func presentViewController(_ viewController: UIViewController) {
-        currentViewController?.removeFromParent()
-        currentViewController?.view.removeFromSuperview()
+    // MARK: - Back navigation
 
-        addChild(viewController)
-        view.addSubview(viewController.view)
-        viewController.view.translatesAutoresizingMaskIntoConstraints = false
+    @objc private func handleGoBack() {
+        // Determine where we currently are and go one step back
+        switch currentViewController {
+        case is MeetupTypeViewController:
+            presentWelcomeScreen()   // back to name entry
+        case is DateTimeSelectionViewController:
+            presentTypeSelection(meetupTitle: pendingMeetupTitle)  // back to type
+        default:
+            presentWelcomeScreen()
+        }
+    }
+
+    // MARK: - Animated transitions
+
+    private enum SlideDirection { case left, right }
+
+    private func transition(to newVC: UIViewController, direction: SlideDirection) {
+        let oldVC = currentViewController
+        let width = view.bounds.width
+        let inOffset  =  direction == .right ? width : -width
+        let outOffset = direction == .right ? -width : width
+
+        addChild(newVC)
+        view.addSubview(newVC.view)
+        newVC.view.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
-            viewController.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            viewController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            viewController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            viewController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            newVC.view.topAnchor.constraint(equalTo: view.topAnchor),
+            newVC.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            newVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            newVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        viewController.didMove(toParent: self)
-        currentViewController = viewController
+        newVC.view.transform = CGAffineTransform(translationX: inOffset, y: 0)
+
+        UIView.animate(
+            withDuration: 0.36,
+            delay: 0,
+            usingSpringWithDamping: 0.9,
+            initialSpringVelocity: 0.2,
+            options: .curveEaseInOut
+        ) {
+            newVC.view.transform = .identity
+            oldVC?.view.transform = CGAffineTransform(translationX: outOffset, y: 0)
+        } completion: { _ in
+            oldVC?.view.removeFromSuperview()
+            oldVC?.removeFromParent()
+            newVC.didMove(toParent: self)
+            self.currentViewController = newVC
+        }
     }
 
     // MARK: - Message Handling
@@ -113,7 +172,7 @@ class MessagesViewController: MSMessagesAppViewController {
               let _ = UUID(uuidString: urlString.replacingOccurrences(of: "meetup://", with: ""))
         else { return nil }
 
-        // TODO: retrieve real meetup from shared UserDefaults/App Group store
+        // TODO: retrieve real meetup from shared UserDefaults / App Group store
         return createMockMeetup()
     }
 
@@ -130,7 +189,7 @@ class MessagesViewController: MSMessagesAppViewController {
         if let meetup = activeMeetup {
             presentAvailabilityInput(for: meetup)
         } else {
-            presentCreateMeetupFlow()
+            presentWelcomeScreen()
         }
     }
 
@@ -148,10 +207,16 @@ class MessagesViewController: MSMessagesAppViewController {
         let ctx = UIGraphicsGetCurrentContext()!
         ctx.setFillColor(UIColor.systemBlue.cgColor)
         ctx.fillEllipse(in: CGRect(origin: .zero, size: size))
-        let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 40), .foregroundColor: UIColor.white]
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 40),
+            .foregroundColor: UIColor.white
+        ]
         let text = "📅"
         let ts = text.size(withAttributes: attrs)
-        text.draw(in: CGRect(x: (size.width-ts.width)/2, y: (size.height-ts.height)/2, width: ts.width, height: ts.height), withAttributes: attrs)
+        text.draw(in: CGRect(x: (size.width - ts.width) / 2,
+                             y: (size.height - ts.height) / 2,
+                             width: ts.width, height: ts.height),
+                  withAttributes: attrs)
         let img = UIGraphicsGetImageFromCurrentImageContext()!
         UIGraphicsEndImageContext()
         return img
@@ -172,13 +237,21 @@ class MessagesViewController: MSMessagesAppViewController {
     }
 }
 
+// MARK: - WelcomeViewControllerDelegate
+
+extension MessagesViewController: WelcomeViewControllerDelegate {
+    func didEnterMeetupName(_ name: String) {
+        pendingMeetupTitle = name
+        presentTypeSelection(meetupTitle: name)
+    }
+}
+
 // MARK: - MeetupTypeViewControllerDelegate
 
 extension MessagesViewController: MeetupTypeViewControllerDelegate {
-    func didSelectMeetupType(_ type: MeetupType, title: String) {
-        pendingMeetupTitle = title
-        pendingMeetupType  = type
-        presentDateTimeSelection(meetupTitle: title, meetupType: type)
+    func didSelectMeetupType(_ type: MeetupType) {
+        pendingMeetupType = type
+        presentDateTimeSelection(meetupTitle: pendingMeetupTitle, meetupType: type)
     }
 }
 
@@ -193,7 +266,7 @@ extension MessagesViewController: DateTimeSelectionViewControllerDelegate {
             creatorName: getCurrentUserName(),
             startDateRange: startDate,
             endDateRange: endDate,
-            duration: duration,       // nil for full-day types like Trip
+            duration: duration,
             deadline: deadline
         )
         activeMeetup = meetup
