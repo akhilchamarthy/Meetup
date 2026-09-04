@@ -23,7 +23,7 @@ class WelcomeViewController: UIViewController {
     /// Floating card that holds the icon + headline
     private let heroCard: UIView = {
         let v = UIView()
-        v.backgroundColor = .white
+        v.backgroundColor = UIColor { tc in tc.userInterfaceStyle == .dark ? .secondarySystemGroupedBackground : .white }
         v.layer.cornerRadius = 24
         v.layer.shadowColor = UIColor.black.cgColor
         v.layer.shadowOpacity = 0.08
@@ -35,26 +35,24 @@ class WelcomeViewController: UIViewController {
 
     private let iconContainerView: UIView = {
         let v = UIView()
-        v.backgroundColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 0.12)
         v.layer.cornerRadius = 28
+        v.clipsToBounds = true
         v.translatesAutoresizingMaskIntoConstraints = false
         return v
     }()
 
-    private let iconLabel: UILabel = {
-        let l = UILabel()
-        l.text = "📅"
-        l.font = .systemFont(ofSize: 36)
-        l.textAlignment = .center
-        l.translatesAutoresizingMaskIntoConstraints = false
-        return l
+    private let logoView: MeetupLogoView = {
+        let v = MeetupLogoView()
+        v.renderStyle = .onBlue
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
     }()
 
     private let appNameLabel: UILabel = {
         let l = UILabel()
         l.text = "Meetup"
         l.font = UIFont.systemFont(ofSize: 28, weight: .bold)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        l.textColor = .label
         l.textAlignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
@@ -64,7 +62,7 @@ class WelcomeViewController: UIViewController {
         let l = UILabel()
         l.text = "Find a time that works\nfor everyone."
         l.font = UIFont.systemFont(ofSize: 15, weight: .regular)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        l.textColor = .label
         l.textAlignment = .center
         l.numberOfLines = 0
         l.translatesAutoresizingMaskIntoConstraints = false
@@ -93,7 +91,7 @@ class WelcomeViewController: UIViewController {
         let tf = UITextField()
         tf.placeholder = "e.g. Weekend Trip to Austin"
         tf.font = UIFont.systemFont(ofSize: 16)
-        tf.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        tf.textColor = .label
         tf.borderStyle = .none
         tf.returnKeyType = .next
         tf.autocapitalizationType = .words
@@ -139,7 +137,7 @@ class WelcomeViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1)
+        view.backgroundColor = UIColor { tc in tc.userInterfaceStyle == .dark ? .systemGroupedBackground : UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1) }
         setupUI()
         nameTextField.delegate = self
         nameTextField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
@@ -208,7 +206,7 @@ class WelcomeViewController: UIViewController {
 
         // Icon container
         heroCard.addSubview(iconContainerView)
-        iconContainerView.addSubview(iconLabel)
+        iconContainerView.addSubview(logoView)
 
         // Text hierarchy
         heroCard.addSubview(appNameLabel)
@@ -229,13 +227,15 @@ class WelcomeViewController: UIViewController {
             heroCard.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
 
             // Icon container
-            iconContainerView.topAnchor.constraint(equalTo: heroCard.topAnchor, constant: 28),
+            iconContainerView.topAnchor.constraint(equalTo: heroCard.topAnchor, constant: 24),
             iconContainerView.centerXAnchor.constraint(equalTo: heroCard.centerXAnchor),
-            iconContainerView.widthAnchor.constraint(equalToConstant: 56),
-            iconContainerView.heightAnchor.constraint(equalToConstant: 56),
+            iconContainerView.widthAnchor.constraint(equalToConstant: 80),
+            iconContainerView.heightAnchor.constraint(equalToConstant: 80),
 
-            iconLabel.centerXAnchor.constraint(equalTo: iconContainerView.centerXAnchor),
-            iconLabel.centerYAnchor.constraint(equalTo: iconContainerView.centerYAnchor),
+            logoView.topAnchor.constraint(equalTo: iconContainerView.topAnchor),
+            logoView.leadingAnchor.constraint(equalTo: iconContainerView.leadingAnchor),
+            logoView.trailingAnchor.constraint(equalTo: iconContainerView.trailingAnchor),
+            logoView.bottomAnchor.constraint(equalTo: iconContainerView.bottomAnchor),
 
             // App name
             appNameLabel.topAnchor.constraint(equalTo: iconContainerView.bottomAnchor, constant: 14),

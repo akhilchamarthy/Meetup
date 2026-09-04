@@ -18,6 +18,14 @@ fileprivate enum DayState {
     case unavailable
 }
 
+// MARK: - Grid item
+
+fileprivate enum GridItem {
+    case empty
+    case day(Date)
+    case monthHeader(String)   // full-width separator row
+}
+
 // MARK: - AvailabilityViewController
 
 class AvailabilityViewController: UIViewController {
@@ -29,14 +37,15 @@ class AvailabilityViewController: UIViewController {
     private let currentUserName: String
 
     // Calendar data
-    private var daysInRange: [Date] = []
-    private var dayStates: [Date: DayState] = [:]
+    private var daysInRange: [Date] = []       // flat list used for state + submission
+    private var gridItems:   [GridItem] = []   // display list with month-header rows
+    private var dayStates:   [Date: DayState] = [:]
 
     // MARK: - Palette
 
     private static let blue    = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
-    private static let bg      = UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1)
-    private static let ink     = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+    private static let bg      = UIColor { tc in tc.userInterfaceStyle == .dark ? .systemGroupedBackground : UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1) }
+    private static let ink     = UIColor.label
 
     // MARK: - Nav
 
@@ -64,7 +73,7 @@ class AvailabilityViewController: UIViewController {
         let l = UILabel()
         l.text = "Mark your availability"
         l.font = UIFont.systemFont(ofSize: 22, weight: .bold)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        l.textColor = .label
         l.textAlignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
@@ -83,7 +92,7 @@ class AvailabilityViewController: UIViewController {
 
     private let calendarCard: UIView = {
         let v = UIView()
-        v.backgroundColor = .white
+        v.backgroundColor = UIColor { tc in tc.userInterfaceStyle == .dark ? .secondarySystemGroupedBackground : .white }
         v.layer.cornerRadius = 16
         v.layer.shadowColor = UIColor.black.cgColor
         v.layer.shadowOpacity = 0.06
@@ -108,7 +117,7 @@ class AvailabilityViewController: UIViewController {
             let l = UILabel()
             l.text = d
             l.font = .systemFont(ofSize: 11, weight: .semibold)
-            l.textColor = .black
+            l.textColor = .secondaryLabel
             l.textAlignment = .center
             return l
         }
@@ -127,7 +136,8 @@ class AvailabilityViewController: UIViewController {
         cv.delegate   = self
         cv.dataSource = self
         cv.isScrollEnabled = true
-        cv.register(CalendarDayCell.self, forCellWithReuseIdentifier: CalendarDayCell.reuseID)
+        cv.register(CalendarDayCell.self,   forCellWithReuseIdentifier: CalendarDayCell.reuseID)
+        cv.register(MonthHeaderCell.self,   forCellWithReuseIdentifier: MonthHeaderCell.reuseID)
         cv.translatesAutoresizingMaskIntoConstraints = false
         return cv
     }()
@@ -186,6 +196,47 @@ class AvailabilityViewController: UIViewController {
             daysInRange.append(current)
             dayStates[current] = .available
             current = cal.date(byAdding: .day, value: 1, to: current)!
+        }
+        buildGridItems()
+    }
+
+    /// Builds the flat display list that the collection view uses.
+    /// Days flow left-to-right; when the month changes a full-width
+    /// header row is injected between the last week of the old month
+    /// and the first (offset-padded) week of the new month.
+    private func buildGridItems() {
+        gridItems = []
+        guard !daysInRange.isEmpty else { return }
+
+        let cal = Calendar.current
+        let monthFmt = DateFormatter()
+        monthFmt.dateFormat = "MMMM"
+
+        var currentMonth = cal.component(.month, from: daysInRange[0])
+
+        // First month header so the user knows which month the range opens in.
+        gridItems.append(.monthHeader(monthFmt.string(from: daysInRange[0])))
+
+        // Leading empty cells so the first day lands on the right weekday column.
+        gridItems += Array(repeating: .empty, count: weekdayIndex(for: daysInRange[0]))
+
+        for date in daysInRange {
+            let month = cal.component(.month, from: date)
+
+            if month != currentMonth {
+                // Pad to the end of the current week row.
+                let pos = gridItems.count % 7
+                if pos > 0 {
+                    gridItems += Array(repeating: .empty, count: 7 - pos)
+                }
+                // Full-width month-name separator.
+                gridItems.append(.monthHeader(monthFmt.string(from: date)))
+                // Leading empties so the 1st of the new month lands correctly.
+                gridItems += Array(repeating: .empty, count: weekdayIndex(for: date))
+                currentMonth = month
+            }
+
+            gridItems.append(.day(date))
         }
     }
 
@@ -324,7 +375,7 @@ class AvailabilityViewController: UIViewController {
         let label = UILabel()
         label.text = text
         label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = .black
+        label.textColor = .label
 
         let sv = UIStackView(arrangedSubviews: [dot, label])
         sv.axis = .horizontal; sv.spacing = 6; sv.alignment = .center
@@ -336,37 +387,48 @@ class AvailabilityViewController: UIViewController {
 
 extension AvailabilityViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
 
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        weekdayIndex(for: daysInRange.first ?? Date()) + daysInRange.count
+    func collectionView(_ collectionView: UICollectionView,
+                        numberOfItemsInSection section: Int) -> Int {
+        gridItems.count
     }
 
     func collectionView(_ collectionView: UICollectionView,
                         cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(
-            withReuseIdentifier: CalendarDayCell.reuseID, for: indexPath) as! CalendarDayCell
-        let offset   = weekdayIndex(for: daysInRange.first ?? Date())
-        let dayIndex = indexPath.item - offset
-        if dayIndex < 0 {
+        switch gridItems[indexPath.item] {
+        case .empty:
+            let cell = collectionView.dequeueReusableCell(
+                withReuseIdentifier: CalendarDayCell.reuseID, for: indexPath) as! CalendarDayCell
             cell.configureEmpty()
-        } else {
-            let date = daysInRange[dayIndex]
+            return cell
+
+        case .day(let date):
+            let cell = collectionView.dequeueReusableCell(
+                withReuseIdentifier: CalendarDayCell.reuseID, for: indexPath) as! CalendarDayCell
             cell.configure(with: date, state: dayStates[date] ?? .available)
+            return cell
+
+        case .monthHeader(let name):
+            let cell = collectionView.dequeueReusableCell(
+                withReuseIdentifier: MonthHeaderCell.reuseID, for: indexPath) as! MonthHeaderCell
+            cell.configure(month: name)
+            return cell
         }
-        return cell
     }
 
     func collectionView(_ collectionView: UICollectionView,
                         layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let width = (collectionView.frame.width - 6 * 4) / 7
-        return CGSize(width: width, height: width * 1.1)
+        // Month headers span the full collection-view width.
+        if case .monthHeader = gridItems[indexPath.item] {
+            return CGSize(width: collectionView.bounds.width, height: 32)
+        }
+        let side = (collectionView.bounds.width - 6 * 4) / 7
+        return CGSize(width: side, height: side * 1.1)
     }
 
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let offset   = weekdayIndex(for: daysInRange.first ?? Date())
-        let dayIndex = indexPath.item - offset
-        guard dayIndex >= 0 else { return }
-        let date = daysInRange[dayIndex]
+    func collectionView(_ collectionView: UICollectionView,
+                        didSelectItemAt indexPath: IndexPath) {
+        guard case .day(let date) = gridItems[indexPath.item] else { return }
         dayStates[date] = (dayStates[date] == .available) ? .unavailable : .available
         collectionView.reloadItems(at: [indexPath])
     }
@@ -432,8 +494,69 @@ class CalendarDayCell: UICollectionViewCell {
             dateLabel.textColor = .white
         case .unavailable:
             contentView.backgroundColor = .systemRed
-            dayLabel.textColor  = .black
-            dateLabel.textColor = .black
+            dayLabel.textColor  = .white
+            dateLabel.textColor = .white
         }
+    }
+}
+
+// MARK: - MonthHeaderCell
+
+/// Full-width separator row that shows the month name between two hairlines.
+class MonthHeaderCell: UICollectionViewCell {
+
+    static let reuseID = "MonthHeaderCell"
+
+    private let leftLine: UIView = {
+        let v = UIView()
+        v.backgroundColor = UIColor.systemGray4
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
+    private let monthLabel: UILabel = {
+        let l = UILabel()
+        l.font          = UIFont.systemFont(ofSize: 12, weight: .semibold)
+        l.textColor     = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
+        l.textAlignment = .center
+        l.setContentHuggingPriority(.required, for: .horizontal)
+        l.translatesAutoresizingMaskIntoConstraints = false
+        return l
+    }()
+
+    private let rightLine: UIView = {
+        let v = UIView()
+        v.backgroundColor = UIColor.systemGray4
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.backgroundColor = .clear
+        contentView.addSubview(leftLine)
+        contentView.addSubview(monthLabel)
+        contentView.addSubview(rightLine)
+
+        NSLayoutConstraint.activate([
+            monthLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            monthLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+
+            leftLine.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            leftLine.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
+            leftLine.trailingAnchor.constraint(equalTo: monthLabel.leadingAnchor, constant: -10),
+            leftLine.heightAnchor.constraint(equalToConstant: 1),
+
+            rightLine.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            rightLine.leadingAnchor.constraint(equalTo: monthLabel.trailingAnchor, constant: 10),
+            rightLine.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+            rightLine.heightAnchor.constraint(equalToConstant: 1),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(month: String) {
+        monthLabel.text = month
     }
 }

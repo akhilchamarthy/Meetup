@@ -7,20 +7,43 @@
 
 import Foundation
 
+// MARK: - MeetupSettings
+
+struct MeetupSettings: Codable {
+    var showParticipantAvailability: Bool = true
+    var isAnonymous: Bool = false
+    var allowAvailabilityUpdates: Bool = true
+
+    static func load() -> MeetupSettings {
+        guard let data = UserDefaults.standard.data(forKey: "meetup_settings"),
+              let settings = try? JSONDecoder().decode(MeetupSettings.self, from: data)
+        else { return MeetupSettings() }
+        return settings
+    }
+
+    func save() {
+        if let data = try? JSONEncoder().encode(self) {
+            UserDefaults.standard.set(data, forKey: "meetup_settings")
+        }
+    }
+}
+
+// MARK: - MeetupType
+
 enum MeetupType: String, CaseIterable, Codable {
-    case trip = "Trip"
+    case trip    = "Trip"
     case hangout = "Hangout"
-    case date = "Date"
+    case date    = "Date"
     case meeting = "Meeting"
-    case event = "Event"
+    case event   = "Event"
 
     var icon: String {
         switch self {
-        case .trip:     return "✈️"
-        case .hangout:  return "🎉"
-        case .date:     return "💕"
-        case .meeting:  return "💼"
-        case .event:    return "📅"
+        case .trip:    return "✈️"
+        case .hangout: return "🎉"
+        case .date:    return "💕"
+        case .meeting: return "💼"
+        case .event:   return "📅"
         }
     }
 
@@ -79,9 +102,11 @@ struct Meetup: Codable {
     var availabilities: [UserAvailability]
     var isFinalized: Bool
     var finalizedTimeSlot: TimeSlot?
+    var settings: MeetupSettings
 
     init(title: String, type: MeetupType, creatorId: String, creatorName: String,
-         startDateRange: Date, endDateRange: Date, duration: TimeInterval?, deadline: Date) {
+         startDateRange: Date, endDateRange: Date, duration: TimeInterval?, deadline: Date,
+         settings: MeetupSettings = MeetupSettings()) {
         self.id = UUID()
         self.title = title
         self.type = type
@@ -95,6 +120,7 @@ struct Meetup: Codable {
         self.availabilities = []
         self.isFinalized = false
         self.finalizedTimeSlot = nil
+        self.settings = settings
     }
 
     var isActive: Bool { !isFinalized && Date() < deadline }

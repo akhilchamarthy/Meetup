@@ -46,7 +46,7 @@ class MeetupTypeViewController: UIViewController {
         let l = UILabel()
         l.text = "What kind of meetup?"
         l.font = UIFont.systemFont(ofSize: 22, weight: .bold)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        l.textColor = .label
         l.textAlignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
@@ -89,6 +89,26 @@ class MeetupTypeViewController: UIViewController {
         return b
     }()
 
+    private lazy var trashButton: UIButton = {
+        let b = UIButton(type: .system)
+        let cfg = UIImage.SymbolConfiguration(pointSize: 20, weight: .regular)
+        b.setImage(UIImage(systemName: "trash", withConfiguration: cfg), for: .normal)
+        b.tintColor = .systemRed
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.addTarget(self, action: #selector(trashTapped), for: .touchUpInside)
+        return b
+    }()
+
+    private lazy var settingsButton: UIButton = {
+        let b = UIButton(type: .system)
+        let cfg = UIImage.SymbolConfiguration(pointSize: 20, weight: .regular)
+        b.setImage(UIImage(systemName: "gearshape", withConfiguration: cfg), for: .normal)
+        b.tintColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.addTarget(self, action: #selector(settingsTapped), for: .touchUpInside)
+        return b
+    }()
+
     private var selectedType: MeetupType?
 
     // MARK: - Init
@@ -104,7 +124,7 @@ class MeetupTypeViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1)
+        view.backgroundColor = UIColor { tc in tc.userInterfaceStyle == .dark ? .systemGroupedBackground : UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1) }
         subheadLabel.text = "\"\(meetupTitle)\""
         setupUI()
     }
@@ -129,7 +149,9 @@ class MeetupTypeViewController: UIViewController {
         view.addSubview(headlineLabel)
         view.addSubview(subheadLabel)
         view.addSubview(collectionView)
+        view.addSubview(trashButton)
         view.addSubview(nextButton)
+        view.addSubview(settingsButton)
 
         NSLayoutConstraint.activate([
             backButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
@@ -153,18 +175,44 @@ class MeetupTypeViewController: UIViewController {
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             collectionView.bottomAnchor.constraint(equalTo: nextButton.topAnchor, constant: -12),
 
+            // Bottom bar: [trash 44] [8] [Next flex] [8] [settings 44]
+            trashButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
+            trashButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            trashButton.widthAnchor.constraint(equalToConstant: 44),
+            trashButton.heightAnchor.constraint(equalToConstant: 50),
+
             nextButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
-            nextButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            nextButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            nextButton.leadingAnchor.constraint(equalTo: trashButton.trailingAnchor, constant: 8),
+            nextButton.trailingAnchor.constraint(equalTo: settingsButton.leadingAnchor, constant: -8),
             nextButton.heightAnchor.constraint(equalToConstant: 50),
+
+            settingsButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
+            settingsButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            settingsButton.widthAnchor.constraint(equalToConstant: 44),
+            settingsButton.heightAnchor.constraint(equalToConstant: 50),
         ])
     }
 
     // MARK: - Actions
 
     @objc private func backTapped() {
-        // MessagesViewController handles the navigation stack
         NotificationCenter.default.post(name: .meetupGoBack, object: nil)
+    }
+
+    @objc private func trashTapped() {
+        let alert = UIAlertController(title: "Discard Meetup?",
+                                      message: "This will cancel the current meetup creation.",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Discard", style: .destructive) { _ in
+            NotificationCenter.default.post(name: .meetupCancelCreation, object: nil)
+        })
+        alert.addAction(UIAlertAction(title: "Keep", style: .cancel))
+        present(alert, animated: true)
+    }
+
+    @objc private func settingsTapped() {
+        // Profile-only — meetup type not yet chosen, so no meetup-specific settings yet.
+        present(SettingsViewController(showMeetupSettings: false), animated: true)
     }
 
     @objc private func nextButtonTapped() {
@@ -254,7 +302,7 @@ class MeetupTypeCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.backgroundColor = .white
+        contentView.backgroundColor = UIColor { tc in tc.userInterfaceStyle == .dark ? .secondarySystemGroupedBackground : .white }
         contentView.layer.cornerRadius = 16
         contentView.layer.shadowColor = UIColor.black.cgColor
         contentView.layer.shadowOpacity = 0.06
@@ -288,9 +336,9 @@ class MeetupTypeCell: UICollectionViewCell {
             contentView.layer.borderColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1).cgColor
             titleLabel.textColor = .white
         } else {
-            contentView.backgroundColor = .white
+            contentView.backgroundColor = UIColor { tc in tc.userInterfaceStyle == .dark ? .secondarySystemGroupedBackground : .white }
             contentView.layer.borderColor = UIColor.clear.cgColor
-            titleLabel.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+            titleLabel.textColor = .label
         }
     }
 }
@@ -298,5 +346,7 @@ class MeetupTypeCell: UICollectionViewCell {
 // MARK: - Notification name
 
 extension Notification.Name {
-    static let meetupGoBack = Notification.Name("meetupGoBack")
+    static let meetupGoBack         = Notification.Name("meetupGoBack")
+    static let meetupCancelCreation = Notification.Name("meetupCancelCreation")
+    static let meetupNightModeChanged = Notification.Name("meetupNightModeChanged")
 }

@@ -7,23 +7,30 @@
 
 import UIKit
 
+protocol ResultsViewControllerDelegate: AnyObject {
+    func didFinalizeMeetup(_ meetup: Meetup)
+}
+
 class ResultsViewController: UIViewController {
 
+    weak var delegate: ResultsViewControllerDelegate?
+
     private let meetup: Meetup
+    private let currentUserId: String
 
     // MARK: - Palette
 
-    private static let blue    = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
-    private static let bg      = UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1)
-    private static let ink     = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+    private static let blue = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
+    private static let bg   = UIColor { tc in tc.userInterfaceStyle == .dark ? .systemGroupedBackground : UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1) }
+    private static let ink  = UIColor.label
 
     // MARK: - Header
 
     private let headlineLabel: UILabel = {
         let l = UILabel()
-        l.text = "Results"
-        l.font = UIFont.systemFont(ofSize: 22, weight: .bold)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        l.text          = "Results"
+        l.font          = UIFont.systemFont(ofSize: 22, weight: .bold)
+        l.textColor     = .label
         l.textAlignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
@@ -31,8 +38,8 @@ class ResultsViewController: UIViewController {
 
     private let subheadLabel: UILabel = {
         let l = UILabel()
-        l.font = UIFont.systemFont(ofSize: 14)
-        l.textColor = .secondaryLabel
+        l.font          = UIFont.systemFont(ofSize: 14)
+        l.textColor     = .secondaryLabel
         l.textAlignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
@@ -40,10 +47,10 @@ class ResultsViewController: UIViewController {
 
     private let statusBadge: UILabel = {
         let l = UILabel()
-        l.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
-        l.textAlignment = .center
+        l.font              = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        l.textAlignment     = .center
         l.layer.cornerRadius = 10
-        l.clipsToBounds = true
+        l.clipsToBounds     = true
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
     }()
@@ -59,7 +66,7 @@ class ResultsViewController: UIViewController {
 
     private let contentStack: UIStackView = {
         let sv = UIStackView()
-        sv.axis = .vertical
+        sv.axis    = .vertical
         sv.spacing = 12
         sv.translatesAutoresizingMaskIntoConstraints = false
         return sv
@@ -71,46 +78,36 @@ class ResultsViewController: UIViewController {
 
     private lazy var participantsTableView: UITableView = {
         let tv = UITableView()
-        tv.delegate   = self
-        tv.dataSource = self
+        tv.delegate        = self
+        tv.dataSource      = self
         tv.register(ParticipantCell.self, forCellReuseIdentifier: "ParticipantCell")
-        tv.isScrollEnabled   = false
-        tv.backgroundColor   = .clear
-        tv.separatorInset    = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        tv.isScrollEnabled = false
+        tv.backgroundColor = .clear
+        tv.separatorInset  = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
         tv.translatesAutoresizingMaskIntoConstraints = false
         return tv
     }()
 
     private var participantsHeightConstraint: NSLayoutConstraint!
 
-    // MARK: - Common times card
+    // MARK: - Heat map card
 
-    private let commonCard = ResultsViewController.makeCard()
+    private let heatMapCard = ResultsViewController.makeCard()
 
-    private let commonCardTitle: UILabel = ResultsViewController.makeCardTitle("")
+    private let heatMapCardTitle = ResultsViewController.makeCardTitle("Availability")
 
-    private lazy var commonTableView: UITableView = {
-        let tv = UITableView()
-        tv.delegate   = self
-        tv.dataSource = self
-        tv.register(CommonDayCell.self,      forCellReuseIdentifier: "CommonDayCell")
-        tv.register(AvailableSlotCell.self,  forCellReuseIdentifier: "AvailableSlotCell")
-        tv.isScrollEnabled  = false
-        tv.backgroundColor  = .clear
-        tv.separatorInset   = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
-        tv.translatesAutoresizingMaskIntoConstraints = false
-        return tv
+    private let calendarHeatMapView: CalendarHeatMapView = {
+        let v = CalendarHeatMapView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
     }()
 
-    private var commonHeightConstraint: NSLayoutConstraint!
-
-    private let noCommonLabel: UILabel = {
+    private let noResponsesLabel: UILabel = {
         let l = UILabel()
-        l.text = "No common availability yet"
-        l.font = UIFont.systemFont(ofSize: 15)
-        l.textColor = .secondaryLabel
+        l.text          = "Waiting for responses…"
+        l.font          = UIFont.systemFont(ofSize: 14)
+        l.textColor     = .secondaryLabel
         l.textAlignment = .center
-        l.numberOfLines = 0
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
     }()
@@ -120,8 +117,8 @@ class ResultsViewController: UIViewController {
     private let finalizeButton: UIButton = {
         let b = UIButton(type: .system)
         b.setTitle("Finalize Meetup", for: .normal)
-        b.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
-        b.backgroundColor  = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
+        b.titleLabel?.font   = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        b.backgroundColor    = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
         b.setTitleColor(.white, for: .normal)
         b.layer.cornerRadius = 14
         b.translatesAutoresizingMaskIntoConstraints = false
@@ -133,12 +130,14 @@ class ResultsViewController: UIViewController {
 
     private var commonDays:  [Date]     = []
     private var commonSlots: [TimeSlot] = []
+    private var dayHeat:     [Date: Int] = [:]
     private var isFullDay: Bool { meetup.type.isFullDay }
 
     // MARK: - Init
 
-    init(meetup: Meetup) {
-        self.meetup = meetup
+    init(meetup: Meetup, currentUserId: String) {
+        self.meetup        = meetup
+        self.currentUserId = currentUserId
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -149,87 +148,86 @@ class ResultsViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Self.bg
-        calculateCommon()
+        calculateData()
         setupUI()
         updateDynamicUI()
     }
 
     // MARK: - Calculation
 
-    private func calculateCommon() {
+    private func calculateData() {
         if isFullDay {
             commonDays = meetup.findCommonAvailableDays()
         } else {
             commonSlots = meetup.findCommonAvailableSlots()
         }
+        dayHeat = computeDayHeat()
+    }
+
+    /// For each day in the meetup range, count how many participants are available.
+    private func computeDayHeat() -> [Date: Int] {
+        let cal = Calendar.current
+        var heat: [Date: Int] = [:]
+        for a in meetup.availabilities {
+            if isFullDay {
+                for day in a.availableDays {
+                    heat[day, default: 0] += 1
+                }
+            } else {
+                var covered = Set<Date>()
+                for slot in a.availableSlots {
+                    var d = cal.startOfDay(for: slot.start)
+                    let end = cal.startOfDay(for: slot.end)
+                    while d <= end {
+                        covered.insert(d)
+                        guard let next = cal.date(byAdding: .day, value: 1, to: d) else { break }
+                        d = next
+                    }
+                }
+                covered.forEach { heat[$0, default: 0] += 1 }
+            }
+        }
+        return heat
+    }
+
+    private func allDaysInRange() -> [Date] {
+        let cal = Calendar.current
+        var days: [Date] = []
+        var d   = cal.startOfDay(for: meetup.startDateRange)
+        let end = cal.startOfDay(for: meetup.endDateRange)
+        while d <= end {
+            days.append(d)
+            guard let next = cal.date(byAdding: .day, value: 1, to: d) else { break }
+            d = next
+        }
+        return days
     }
 
     // MARK: - Layout
 
     private func setupUI() {
         subheadLabel.text = "\(meetup.type.icon)  \(meetup.title)"
-        commonCardTitle.text = isFullDay ? "Common available days" : "Common available times"
 
         // Status badge
-        let fmt = DateFormatter()
-        fmt.dateStyle = .medium; fmt.timeStyle = .short
+        let fmt = DateFormatter(); fmt.dateStyle = .medium; fmt.timeStyle = .short
         if meetup.isFinalized, let slot = meetup.finalizedTimeSlot {
-            statusBadge.text            = "  Finalized for \(fmt.string(from: slot.start))  "
+            statusBadge.text            = "  Finalized: \(fmt.string(from: slot.start))  "
             statusBadge.textColor       = .white
             statusBadge.backgroundColor = .systemGreen
         } else if meetup.isActive {
-            statusBadge.text            = "  Responses due \(fmt.string(from: meetup.deadline))  "
-            statusBadge.textColor       = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
-            statusBadge.backgroundColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 0.10)
+            statusBadge.text            = "  Due \(fmt.string(from: meetup.deadline))  "
+            statusBadge.textColor       = Self.blue
+            statusBadge.backgroundColor = Self.blue.withAlphaComponent(0.10)
         } else {
             statusBadge.text            = "  Response period ended  "
             statusBadge.textColor       = .white
-            statusBadge.backgroundColor = UIColor.systemOrange
+            statusBadge.backgroundColor = .systemOrange
         }
 
-        // Participants card
-        let participantsTitle = Self.makeCardTitle("Participants")
-        participantsCard.addSubview(participantsTitle)
-        participantsCard.addSubview(participantsTableView)
-        participantsTitle.translatesAutoresizingMaskIntoConstraints = false
-        participantsHeightConstraint = participantsTableView.heightAnchor.constraint(equalToConstant: 0)
-        NSLayoutConstraint.activate([
-            participantsTitle.topAnchor.constraint(equalTo: participantsCard.topAnchor, constant: 16),
-            participantsTitle.leadingAnchor.constraint(equalTo: participantsCard.leadingAnchor, constant: 16),
-            participantsTitle.trailingAnchor.constraint(equalTo: participantsCard.trailingAnchor, constant: -16),
+        buildParticipantsCard()
+        buildHeatMapCard()
 
-            participantsTableView.topAnchor.constraint(equalTo: participantsTitle.bottomAnchor, constant: 8),
-            participantsTableView.leadingAnchor.constraint(equalTo: participantsCard.leadingAnchor),
-            participantsTableView.trailingAnchor.constraint(equalTo: participantsCard.trailingAnchor),
-            participantsHeightConstraint,
-            participantsTableView.bottomAnchor.constraint(equalTo: participantsCard.bottomAnchor, constant: -8),
-        ])
-
-        // Common card
-        commonCard.addSubview(commonCardTitle)
-        commonCard.addSubview(commonTableView)
-        commonCard.addSubview(noCommonLabel)
-        commonCardTitle.translatesAutoresizingMaskIntoConstraints = false
-        commonHeightConstraint = commonTableView.heightAnchor.constraint(equalToConstant: 0)
-        NSLayoutConstraint.activate([
-            commonCardTitle.topAnchor.constraint(equalTo: commonCard.topAnchor, constant: 16),
-            commonCardTitle.leadingAnchor.constraint(equalTo: commonCard.leadingAnchor, constant: 16),
-            commonCardTitle.trailingAnchor.constraint(equalTo: commonCard.trailingAnchor, constant: -16),
-
-            commonTableView.topAnchor.constraint(equalTo: commonCardTitle.bottomAnchor, constant: 8),
-            commonTableView.leadingAnchor.constraint(equalTo: commonCard.leadingAnchor),
-            commonTableView.trailingAnchor.constraint(equalTo: commonCard.trailingAnchor),
-            commonHeightConstraint,
-            commonTableView.bottomAnchor.constraint(equalTo: commonCard.bottomAnchor, constant: -8),
-
-            noCommonLabel.topAnchor.constraint(equalTo: commonCardTitle.bottomAnchor, constant: 12),
-            noCommonLabel.leadingAnchor.constraint(equalTo: commonCard.leadingAnchor, constant: 16),
-            noCommonLabel.trailingAnchor.constraint(equalTo: commonCard.trailingAnchor, constant: -16),
-            noCommonLabel.bottomAnchor.constraint(equalTo: commonCard.bottomAnchor, constant: -16),
-        ])
-
-        // Add cards to stack
-        [participantsCard, commonCard].forEach { contentStack.addArrangedSubview($0) }
+        [participantsCard, heatMapCard].forEach { contentStack.addArrangedSubview($0) }
 
         scrollView.addSubview(contentStack)
         view.addSubview(headlineLabel)
@@ -269,19 +267,125 @@ class ResultsViewController: UIViewController {
         ])
     }
 
+    private func buildParticipantsCard() {
+        let title = Self.makeCardTitle("Participants")
+        participantsCard.addSubview(title)
+        participantsCard.addSubview(participantsTableView)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        participantsHeightConstraint = participantsTableView.heightAnchor.constraint(equalToConstant: 0)
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(equalTo: participantsCard.topAnchor, constant: 16),
+            title.leadingAnchor.constraint(equalTo: participantsCard.leadingAnchor, constant: 16),
+            title.trailingAnchor.constraint(equalTo: participantsCard.trailingAnchor, constant: -16),
+
+            participantsTableView.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            participantsTableView.leadingAnchor.constraint(equalTo: participantsCard.leadingAnchor),
+            participantsTableView.trailingAnchor.constraint(equalTo: participantsCard.trailingAnchor),
+            participantsHeightConstraint,
+            participantsTableView.bottomAnchor.constraint(equalTo: participantsCard.bottomAnchor, constant: -8),
+        ])
+    }
+
+    private func buildHeatMapCard() {
+        let legend = buildLegend()
+
+        heatMapCard.addSubview(heatMapCardTitle)
+        heatMapCard.addSubview(noResponsesLabel)
+        heatMapCard.addSubview(calendarHeatMapView)
+        heatMapCard.addSubview(legend)
+
+        heatMapCardTitle.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            heatMapCardTitle.topAnchor.constraint(equalTo: heatMapCard.topAnchor, constant: 16),
+            heatMapCardTitle.leadingAnchor.constraint(equalTo: heatMapCard.leadingAnchor, constant: 16),
+            heatMapCardTitle.trailingAnchor.constraint(equalTo: heatMapCard.trailingAnchor, constant: -16),
+
+            // "Waiting" label — shown when no responses yet
+            noResponsesLabel.topAnchor.constraint(equalTo: heatMapCardTitle.bottomAnchor, constant: 24),
+            noResponsesLabel.leadingAnchor.constraint(equalTo: heatMapCard.leadingAnchor, constant: 16),
+            noResponsesLabel.trailingAnchor.constraint(equalTo: heatMapCard.trailingAnchor, constant: -16),
+            noResponsesLabel.bottomAnchor.constraint(equalTo: heatMapCard.bottomAnchor, constant: -24),
+
+            // Heat map calendar
+            calendarHeatMapView.topAnchor.constraint(equalTo: heatMapCardTitle.bottomAnchor, constant: 12),
+            calendarHeatMapView.leadingAnchor.constraint(equalTo: heatMapCard.leadingAnchor, constant: 16),
+            calendarHeatMapView.trailingAnchor.constraint(equalTo: heatMapCard.trailingAnchor, constant: -16),
+
+            // Legend below the calendar
+            legend.topAnchor.constraint(equalTo: calendarHeatMapView.bottomAnchor, constant: 12),
+            legend.leadingAnchor.constraint(equalTo: heatMapCard.leadingAnchor, constant: 16),
+            legend.trailingAnchor.constraint(equalTo: heatMapCard.trailingAnchor, constant: -16),
+            legend.bottomAnchor.constraint(equalTo: heatMapCard.bottomAnchor, constant: -16),
+        ])
+    }
+
+    /// Three color-dot + label pairs showing the heat map scale.
+    private func buildLegend() -> UIView {
+        let stack = UIStackView()
+        stack.axis         = .horizontal
+        stack.spacing      = 14
+        stack.alignment    = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let items: [(UIColor, String)] = [
+            (CalendarHeatMapView.heatColor(count: 0, total: 1), "None"),
+            (CalendarHeatMapView.heatColor(count: 1, total: 3), "Some"),
+            (CalendarHeatMapView.heatColor(count: 1, total: 1), "All"),
+        ]
+
+        for (color, label) in items {
+            let dot = UIView()
+            dot.backgroundColor    = color
+            dot.layer.cornerRadius = 6
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.widthAnchor.constraint(equalToConstant: 12).isActive  = true
+            dot.heightAnchor.constraint(equalToConstant: 12).isActive = true
+
+            let lbl = UILabel()
+            lbl.text      = label
+            lbl.font      = UIFont.systemFont(ofSize: 11)
+            lbl.textColor = .secondaryLabel
+
+            let item = UIStackView(arrangedSubviews: [dot, lbl])
+            item.axis      = .horizontal
+            item.spacing   = 5
+            item.alignment = .center
+            stack.addArrangedSubview(item)
+        }
+
+        // Spacer pushes items to the left
+        let spacer = UIView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        stack.addArrangedSubview(spacer)
+
+        return stack
+    }
+
+    // MARK: - Dynamic updates
+
     private func updateDynamicUI() {
-        let rowCount    = isFullDay ? commonDays.count : commonSlots.count
-        let hasCommon   = rowCount > 0
-        let canFinalize = hasCommon && !meetup.isFinalized
+        let hasResponses = !meetup.availabilities.isEmpty
+        let isCreator    = meetup.creatorId == currentUserId
+        let hasCommon    = !commonDays.isEmpty || !commonSlots.isEmpty
+        let canFinalize  = hasCommon && !meetup.isFinalized && isCreator
 
         participantsHeightConstraint.constant = CGFloat(max(1, meetup.availabilities.count) * 50)
-        commonTableView.isHidden = !hasCommon
-        noCommonLabel.isHidden   = hasCommon
-        finalizeButton.isHidden  = !canFinalize
+        participantsTableView.reloadData()
 
-        if hasCommon {
-            commonHeightConstraint.constant = CGFloat(min(rowCount, 5) * 60)
+        noResponsesLabel.isHidden    = hasResponses
+        calendarHeatMapView.isHidden = !hasResponses
+
+        finalizeButton.isHidden = !canFinalize
+
+        if hasResponses {
+            calendarHeatMapView.configure(
+                daysInRange: allDaysInRange(),
+                heat: dayHeat,
+                totalParticipants: meetup.availabilities.count
+            )
         }
+
         view.layoutIfNeeded()
     }
 
@@ -298,7 +402,11 @@ class ResultsViewController: UIViewController {
                                       preferredStyle: .actionSheet)
         for day in commonDays {
             alert.addAction(UIAlertAction(title: fmt.string(from: day), style: .default) { [weak self] _ in
-                self?.showFinalizedAlert(fmt.string(from: day))
+                guard let self else { return }
+                let cal   = Calendar.current
+                let start = cal.startOfDay(for: day)
+                let end   = cal.date(byAdding: .day, value: 1, to: start)!
+                self.commitFinalization(slot: TimeSlot(start: start, end: end), label: fmt.string(from: day))
             })
         }
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
@@ -312,8 +420,9 @@ class ResultsViewController: UIViewController {
         let alert = UIAlertController(title: "Finalize Meetup", message: "Pick the best time",
                                       preferredStyle: .actionSheet)
         for slot in commonSlots {
-            alert.addAction(UIAlertAction(title: fmt.string(from: slot.start), style: .default) { [weak self] _ in
-                self?.showFinalizedAlert(fmt.string(from: slot.start))
+            let label = "\(fmt.string(from: slot.start)) – \(fmt.string(from: slot.end))"
+            alert.addAction(UIAlertAction(title: label, style: .default) { [weak self] _ in
+                self?.commitFinalization(slot: slot, label: fmt.string(from: slot.start))
             })
         }
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
@@ -321,12 +430,16 @@ class ResultsViewController: UIViewController {
         present(alert, animated: true)
     }
 
-    private func showFinalizedAlert(_ dateString: String) {
-        let alert = UIAlertController(title: "Meetup Finalized! \u{1F389}",
-                                      message: "Scheduled for \(dateString)",
-                                      preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Done", style: .default) { _ in self.dismiss(animated: true) })
-        present(alert, animated: true)
+    private func commitFinalization(slot: TimeSlot, label: String) {
+        var finalized = meetup
+        finalized.isFinalized      = true
+        finalized.finalizedTimeSlot = slot
+        delegate?.didFinalizeMeetup(finalized)
+
+        finalizeButton.isHidden = true
+        statusBadge.text            = "  Finalized: \(label)  "
+        statusBadge.textColor       = .white
+        statusBadge.backgroundColor = .systemGreen
     }
 
     private func popoverIfNeeded(_ alert: UIAlertController, sourceView: UIView) {
@@ -339,67 +452,52 @@ class ResultsViewController: UIViewController {
 
     private static func makeCard() -> UIView {
         let v = UIView()
-        v.backgroundColor = .white
-        v.layer.cornerRadius = 16
-        v.layer.shadowColor = UIColor.black.cgColor
-        v.layer.shadowOpacity = 0.06
-        v.layer.shadowRadius = 8
-        v.layer.shadowOffset = CGSize(width: 0, height: 2)
+        v.backgroundColor        = UIColor { tc in tc.userInterfaceStyle == .dark ? .secondarySystemGroupedBackground : .white }
+        v.layer.cornerRadius     = 16
+        v.layer.shadowColor      = UIColor.black.cgColor
+        v.layer.shadowOpacity    = 0.06
+        v.layer.shadowRadius     = 8
+        v.layer.shadowOffset     = CGSize(width: 0, height: 2)
         v.translatesAutoresizingMaskIntoConstraints = false
         return v
     }
 
     private static func makeCardTitle(_ text: String) -> UILabel {
         let l = UILabel()
-        l.text = text
-        l.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        l.text      = text
+        l.font      = UIFont.systemFont(ofSize: 13, weight: .semibold)
         l.textColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
     }
 }
 
-// MARK: - UITableView
+// MARK: - UITableView (participants only)
 
 extension ResultsViewController: UITableViewDataSource, UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        if tableView == participantsTableView { return meetup.availabilities.count }
-        return isFullDay ? commonDays.count : commonSlots.count
+        meetup.availabilities.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        if tableView == participantsTableView {
-            let cell = tableView.dequeueReusableCell(withIdentifier: "ParticipantCell",
-                                                     for: indexPath) as! ParticipantCell
-            cell.configure(with: meetup.availabilities[indexPath.row])
-            return cell
-        }
-        if isFullDay {
-            let cell = tableView.dequeueReusableCell(withIdentifier: "CommonDayCell",
-                                                     for: indexPath) as! CommonDayCell
-            cell.configure(with: commonDays[indexPath.row])
-            return cell
-        } else {
-            let cell = tableView.dequeueReusableCell(withIdentifier: "AvailableSlotCell",
-                                                     for: indexPath) as! AvailableSlotCell
-            cell.configure(with: commonSlots[indexPath.row])
-            return cell
-        }
+        let cell = tableView.dequeueReusableCell(withIdentifier: "ParticipantCell",
+                                                 for: indexPath) as! ParticipantCell
+        cell.configure(with: meetup.availabilities[indexPath.row],
+                       total: meetup.availabilities.count)
+        return cell
     }
 
-    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        tableView == participantsTableView ? 50 : 60
-    }
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat { 50 }
 }
 
-// MARK: - Cells
+// MARK: - ParticipantCell
 
 class ParticipantCell: UITableViewCell {
 
     private let avatarView: UIView = {
         let v = UIView()
-        v.backgroundColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 0.12)
+        v.backgroundColor    = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 0.12)
         v.layer.cornerRadius = 16
         v.translatesAutoresizingMaskIntoConstraints = false
         return v
@@ -407,8 +505,8 @@ class ParticipantCell: UITableViewCell {
 
     private let avatarLabel: UILabel = {
         let l = UILabel()
-        l.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-        l.textColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
+        l.font          = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        l.textColor     = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
         l.textAlignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
@@ -416,15 +514,15 @@ class ParticipantCell: UITableViewCell {
 
     private let nameLabel: UILabel = {
         let l = UILabel()
-        l.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        l.font      = UIFont.systemFont(ofSize: 15, weight: .medium)
+        l.textColor = .label
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
     }()
 
     private let slotsLabel: UILabel = {
         let l = UILabel()
-        l.font = UIFont.systemFont(ofSize: 12)
+        l.font      = UIFont.systemFont(ofSize: 12)
         l.textColor = .secondaryLabel
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
@@ -460,105 +558,16 @@ class ParticipantCell: UITableViewCell {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(with a: UserAvailability) {
-        nameLabel.text  = a.userName
-        slotsLabel.text = "\(a.availableSlots.count) day(s) available"
+    func configure(with a: UserAvailability, total: Int) {
+        nameLabel.text   = a.userName
         avatarLabel.text = String(a.userName.prefix(1)).uppercased()
-    }
-}
 
-class CommonDayCell: UITableViewCell {
-
-    private let dotView: UIView = {
-        let v = UIView()
-        v.backgroundColor = .systemGreen
-        v.layer.cornerRadius = 5
-        v.translatesAutoresizingMaskIntoConstraints = false
-        return v
-    }()
-
-    private let label: UILabel = {
-        let l = UILabel()
-        l.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
-        l.translatesAutoresizingMaskIntoConstraints = false
-        return l
-    }()
-
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        backgroundColor = .clear; selectionStyle = .none
-        contentView.addSubview(dotView); contentView.addSubview(label)
-        NSLayoutConstraint.activate([
-            dotView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            dotView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            dotView.widthAnchor.constraint(equalToConstant: 10),
-            dotView.heightAnchor.constraint(equalToConstant: 10),
-            label.leadingAnchor.constraint(equalTo: dotView.trailingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            label.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(with date: Date) {
-        let fmt = DateFormatter(); fmt.dateStyle = .full
-        label.text = fmt.string(from: date)
-    }
-}
-
-class AvailableSlotCell: UITableViewCell {
-
-    private let dotView: UIView = {
-        let v = UIView()
-        v.backgroundColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
-        v.layer.cornerRadius = 5
-        v.translatesAutoresizingMaskIntoConstraints = false
-        return v
-    }()
-
-    private let timeLabel: UILabel = {
-        let l = UILabel()
-        l.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
-        l.translatesAutoresizingMaskIntoConstraints = false
-        return l
-    }()
-
-    private let durationLabel: UILabel = {
-        let l = UILabel()
-        l.font = UIFont.systemFont(ofSize: 12)
-        l.textColor = .secondaryLabel
-        l.translatesAutoresizingMaskIntoConstraints = false
-        return l
-    }()
-
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        backgroundColor = .clear; selectionStyle = .none
-        contentView.addSubview(dotView); contentView.addSubview(timeLabel); contentView.addSubview(durationLabel)
-        NSLayoutConstraint.activate([
-            dotView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            dotView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            dotView.widthAnchor.constraint(equalToConstant: 10),
-            dotView.heightAnchor.constraint(equalToConstant: 10),
-            timeLabel.leadingAnchor.constraint(equalTo: dotView.trailingAnchor, constant: 10),
-            timeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            timeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            durationLabel.leadingAnchor.constraint(equalTo: dotView.trailingAnchor, constant: 10),
-            durationLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            durationLabel.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 2),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(with slot: TimeSlot) {
-        let fmt = DateFormatter(); fmt.dateStyle = .medium; fmt.timeStyle = .short
-        timeLabel.text = fmt.string(from: slot.start)
-        let h = Int(slot.duration / 3600)
-        let m = Int(slot.duration.truncatingRemainder(dividingBy: 3600) / 60)
-        durationLabel.text = h > 0 ? "\(h)h \(m)m available" : "\(m)m available"
+        let n = a.availableSlots.count
+        if total > 0 {
+            let pct = Int((Double(n) / Double(total)) * 100)
+            slotsLabel.text = "\(n) day\(n == 1 ? "" : "s") available · \(pct)%"
+        } else {
+            slotsLabel.text = "\(n) day\(n == 1 ? "" : "s") available"
+        }
     }
 }

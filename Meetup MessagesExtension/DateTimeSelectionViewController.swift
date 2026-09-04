@@ -8,7 +8,7 @@
 import UIKit
 
 protocol DateTimeSelectionViewControllerDelegate: AnyObject {
-    func didSelectDateTime(startDate: Date, endDate: Date, duration: TimeInterval?, deadline: Date)
+    func didSelectDateTime(startDate: Date, endDate: Date, duration: TimeInterval?, deadline: Date, settings: MeetupSettings)
 }
 
 class DateTimeSelectionViewController: UIViewController {
@@ -22,8 +22,8 @@ class DateTimeSelectionViewController: UIViewController {
 
     private static let blue = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
     private static let blueTint = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 0.10)
-    private static let bg = UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1)
-    private static let ink = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+    private static let bg  = UIColor { tc in tc.userInterfaceStyle == .dark ? .systemGroupedBackground : UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1) }
+    private static let ink = UIColor.label
 
     // MARK: - Nav bar
 
@@ -51,7 +51,7 @@ class DateTimeSelectionViewController: UIViewController {
         let l = UILabel()
         l.text = "When is the meetup?"
         l.font = UIFont.systemFont(ofSize: 22, weight: .bold)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        l.textColor = .label
         l.textAlignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
@@ -163,7 +163,7 @@ class DateTimeSelectionViewController: UIViewController {
         return p
     }()
 
-    // MARK: - CTA button
+    // MARK: - Bottom bar (trash | Create Meetup | settings)
 
     private let createButton: UIButton = {
         let b = UIButton(type: .system)
@@ -174,6 +174,26 @@ class DateTimeSelectionViewController: UIViewController {
         b.layer.cornerRadius = 14
         b.translatesAutoresizingMaskIntoConstraints = false
         b.addTarget(self, action: #selector(createButtonTapped), for: .touchUpInside)
+        return b
+    }()
+
+    private lazy var trashButton: UIButton = {
+        let b = UIButton(type: .system)
+        let cfg = UIImage.SymbolConfiguration(pointSize: 20, weight: .regular)
+        b.setImage(UIImage(systemName: "trash", withConfiguration: cfg), for: .normal)
+        b.tintColor = .systemRed
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.addTarget(self, action: #selector(trashTapped), for: .touchUpInside)
+        return b
+    }()
+
+    private lazy var settingsButton: UIButton = {
+        let b = UIButton(type: .system)
+        let cfg = UIImage.SymbolConfiguration(pointSize: 20, weight: .regular)
+        b.setImage(UIImage(systemName: "gearshape", withConfiguration: cfg), for: .normal)
+        b.tintColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.addTarget(self, action: #selector(settingsTapped), for: .touchUpInside)
         return b
     }()
 
@@ -239,7 +259,9 @@ class DateTimeSelectionViewController: UIViewController {
         view.addSubview(headlineLabel)
         view.addSubview(subheadLabel)
         view.addSubview(scrollView)
+        view.addSubview(trashButton)
         view.addSubview(createButton)
+        view.addSubview(settingsButton)
 
         NSLayoutConstraint.activate([
             backButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
@@ -269,10 +291,21 @@ class DateTimeSelectionViewController: UIViewController {
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -16),
             contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -40),
 
+            // Bottom bar: [trash 44] [8] [createButton flex] [8] [settings 44]
+            trashButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
+            trashButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            trashButton.widthAnchor.constraint(equalToConstant: 44),
+            trashButton.heightAnchor.constraint(equalToConstant: 50),
+
             createButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
-            createButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            createButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            createButton.leadingAnchor.constraint(equalTo: trashButton.trailingAnchor, constant: 8),
+            createButton.trailingAnchor.constraint(equalTo: settingsButton.leadingAnchor, constant: -8),
             createButton.heightAnchor.constraint(equalToConstant: 50),
+
+            settingsButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
+            settingsButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            settingsButton.widthAnchor.constraint(equalToConstant: 44),
+            settingsButton.heightAnchor.constraint(equalToConstant: 50),
         ])
     }
 
@@ -360,6 +393,21 @@ class DateTimeSelectionViewController: UIViewController {
         NotificationCenter.default.post(name: .meetupGoBack, object: nil)
     }
 
+    @objc private func trashTapped() {
+        let alert = UIAlertController(title: "Discard Meetup?",
+                                      message: "This will cancel the current meetup creation.",
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Discard", style: .destructive) { _ in
+            NotificationCenter.default.post(name: .meetupCancelCreation, object: nil)
+        })
+        alert.addAction(UIAlertAction(title: "Keep", style: .cancel))
+        present(alert, animated: true)
+    }
+
+    @objc private func settingsTapped() {
+        present(SettingsViewController(showMeetupSettings: true), animated: true)
+    }
+
     @objc private func startDateChanged() {
         endDatePicker.minimumDate = Calendar.current.date(byAdding: .day, value: 1, to: startDatePicker.date)
     }
@@ -368,7 +416,11 @@ class DateTimeSelectionViewController: UIViewController {
         let isCustom = durationSegmentedControl.selectedSegmentIndex == 4
         customDurationTextField.isHidden   = !isCustom
         customDurationUnderline.isHidden   = !isCustom
-        if isCustom { customDurationTextField.becomeFirstResponder() }
+        if isCustom {
+            customDurationTextField.becomeFirstResponder()
+        } else {
+            customDurationTextField.resignFirstResponder()
+        }
     }
 
     @objc private func createButtonTapped() {
@@ -390,7 +442,8 @@ class DateTimeSelectionViewController: UIViewController {
         }) { _ in
             UIView.animate(withDuration: 0.1) { self.createButton.transform = .identity }
             self.delegate?.didSelectDateTime(startDate: startDate, endDate: endDate,
-                                             duration: self.selectedDuration, deadline: deadline)
+                                             duration: self.selectedDuration, deadline: deadline,
+                                             settings: MeetupSettings.load())
         }
     }
 
@@ -446,7 +499,7 @@ class DateTimeSelectionViewController: UIViewController {
 
     private static func makeCard() -> UIView {
         let v = UIView()
-        v.backgroundColor = .white
+        v.backgroundColor = UIColor { tc in tc.userInterfaceStyle == .dark ? .secondarySystemGroupedBackground : .white }
         v.layer.cornerRadius = 16
         v.layer.shadowColor = UIColor.black.cgColor
         v.layer.shadowOpacity = 0.06
@@ -469,7 +522,7 @@ class DateTimeSelectionViewController: UIViewController {
         let l = UILabel()
         l.text = text
         l.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        l.textColor = UIColor(red: 0.08, green: 0.08, blue: 0.12, alpha: 1)
+        l.textColor = .label
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
     }
