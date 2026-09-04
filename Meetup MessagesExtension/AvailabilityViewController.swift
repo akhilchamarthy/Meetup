@@ -14,9 +14,16 @@ protocol AvailabilityViewControllerDelegate: AnyObject {
 // MARK: - Day state
 
 fileprivate enum DayState {
-    case neutral    // not yet tapped — outside range or unset
-    case available  // green
-    case unavailable // red
+    case available
+    case unavailable
+}
+
+// MARK: - Grid item
+
+fileprivate enum GridItem {
+    case empty
+    case day(Date)
+    case monthHeader(String)   // full-width separator row
 }
 
 // MARK: - AvailabilityViewController
@@ -30,57 +37,92 @@ class AvailabilityViewController: UIViewController {
     private let currentUserName: String
 
     // Calendar data
-    private var daysInRange: [Date] = []          // all dates in the meetup window
-    private var dayStates: [Date: DayState] = [:]  // keyed by start-of-day
+    private var daysInRange: [Date] = []       // flat list used for state + submission
+    private var gridItems:   [GridItem] = []   // display list with month-header rows
+    private var dayStates:   [Date: DayState] = [:]
 
-    // MARK: - UI
+    // MARK: - Palette
 
-    private let titleLabel: UILabel = {
+    private static let blue    = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
+    private static let bg      = UIColor { tc in tc.userInterfaceStyle == .dark ? .systemGroupedBackground : UIColor(red: 0.96, green: 0.97, blue: 0.99, alpha: 1) }
+    private static let ink     = UIColor.label
+
+    // MARK: - Nav
+
+    private lazy var backButton: UIButton = {
+        let b = UIButton(type: .system)
+        let cfg = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        b.setImage(UIImage(systemName: "chevron.left", withConfiguration: cfg), for: .normal)
+        b.tintColor = Self.blue
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
+        return b
+    }()
+
+    private lazy var progressStack: UIStackView = {
+        let dots = [makeDot(filled: true), makeDot(filled: true), makeDot(filled: true), makeDot(filled: true)]
+        let sv = UIStackView(arrangedSubviews: dots)
+        sv.axis = .horizontal; sv.spacing = 6; sv.alignment = .center
+        sv.translatesAutoresizingMaskIntoConstraints = false
+        return sv
+    }()
+
+    // MARK: - Header
+
+    private let headlineLabel: UILabel = {
         let l = UILabel()
-        l.font = .systemFont(ofSize: 20, weight: .semibold)
+        l.text = "Mark your availability"
+        l.font = UIFont.systemFont(ofSize: 22, weight: .bold)
+        l.textColor = .label
         l.textAlignment = .center
-        l.numberOfLines = 0
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
     }()
 
-    private let subtitleLabel: UILabel = {
+    private let subheadLabel: UILabel = {
         let l = UILabel()
-        l.font = .systemFont(ofSize: 14)
+        l.font = UIFont.systemFont(ofSize: 14)
         l.textColor = .secondaryLabel
         l.textAlignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
     }()
 
+    // MARK: - Calendar card
+
+    private let calendarCard: UIView = {
+        let v = UIView()
+        v.backgroundColor = UIColor { tc in tc.userInterfaceStyle == .dark ? .secondarySystemGroupedBackground : .white }
+        v.layer.cornerRadius = 16
+        v.layer.shadowColor = UIColor.black.cgColor
+        v.layer.shadowOpacity = 0.06
+        v.layer.shadowRadius = 8
+        v.layer.shadowOffset = CGSize(width: 0, height: 2)
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
     private let legendStack: UIStackView = {
-        let green = AvailabilityViewController.legendDot(color: .systemGreen, text: "Available")
-        let red   = AvailabilityViewController.legendDot(color: .systemRed,   text: "Unavailable")
-        let hint  = AvailabilityViewController.legendDot(color: .systemGray4, text: "Tap to toggle")
-        let sv = UIStackView(arrangedSubviews: [green, red, hint])
-        sv.axis = .horizontal
-        sv.spacing = 16
-        sv.alignment = .center
-        sv.distribution = .equalSpacing
+        let green = AvailabilityViewController.legendItem(color: .systemGreen, text: "Available")
+        let red   = AvailabilityViewController.legendItem(color: .systemRed, text: "Unavailable")
+        let sv = UIStackView(arrangedSubviews: [green, red])
+        sv.axis = .horizontal; sv.spacing = 20; sv.alignment = .center
         sv.translatesAutoresizingMaskIntoConstraints = false
         return sv
     }()
 
-    // Weekday header (S M T W T F S)
     private let weekdayHeaderStack: UIStackView = {
         let days = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
         let labels = days.map { d -> UILabel in
             let l = UILabel()
             l.text = d
-            l.font = .systemFont(ofSize: 12, weight: .semibold)
+            l.font = .systemFont(ofSize: 11, weight: .semibold)
             l.textColor = .secondaryLabel
             l.textAlignment = .center
             return l
         }
         let sv = UIStackView(arrangedSubviews: labels)
-        sv.axis = .horizontal
-        sv.distribution = .fillEqually
-        sv.spacing = 4
+        sv.axis = .horizontal; sv.distribution = .fillEqually; sv.spacing = 4
         sv.translatesAutoresizingMaskIntoConstraints = false
         return sv
     }()
@@ -93,22 +135,24 @@ class AvailabilityViewController: UIViewController {
         cv.backgroundColor = .clear
         cv.delegate   = self
         cv.dataSource = self
-        cv.isScrollEnabled = false
-        cv.register(CalendarDayCell.self, forCellWithReuseIdentifier: CalendarDayCell.reuseID)
+        cv.isScrollEnabled = true
+        cv.register(CalendarDayCell.self,   forCellWithReuseIdentifier: CalendarDayCell.reuseID)
+        cv.register(MonthHeaderCell.self,   forCellWithReuseIdentifier: MonthHeaderCell.reuseID)
         cv.translatesAutoresizingMaskIntoConstraints = false
         return cv
     }()
 
-    // Dynamic height constraint updated after layout
     private var calendarHeightConstraint: NSLayoutConstraint!
+
+    // MARK: - Submit
 
     private let submitButton: UIButton = {
         let b = UIButton(type: .system)
         b.setTitle("Submit Availability", for: .normal)
-        b.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
-        b.backgroundColor = .systemBlue
+        b.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        b.backgroundColor = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
         b.setTitleColor(.white, for: .normal)
-        b.layer.cornerRadius = 25
+        b.layer.cornerRadius = 14
         b.translatesAutoresizingMaskIntoConstraints = false
         b.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
         return b
@@ -129,13 +173,17 @@ class AvailabilityViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        view.backgroundColor = Self.bg
         buildDaysInRange()
         setupUI()
+
+        let fmt = DateFormatter()
+        fmt.dateStyle = .medium
+        subheadLabel.text = "\(meetup.type.icon)  \(fmt.string(from: meetup.startDateRange)) – \(fmt.string(from: meetup.endDateRange))"
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateCalendarHeight()
     }
 
     // MARK: - Data
@@ -149,77 +197,115 @@ class AvailabilityViewController: UIViewController {
             dayStates[current] = .available
             current = cal.date(byAdding: .day, value: 1, to: current)!
         }
+        buildGridItems()
+    }
+
+    /// Builds the flat display list that the collection view uses.
+    /// Days flow left-to-right; when the month changes a full-width
+    /// header row is injected between the last week of the old month
+    /// and the first (offset-padded) week of the new month.
+    private func buildGridItems() {
+        gridItems = []
+        guard !daysInRange.isEmpty else { return }
+
+        let cal = Calendar.current
+        let monthFmt = DateFormatter()
+        monthFmt.dateFormat = "MMMM"
+
+        var currentMonth = cal.component(.month, from: daysInRange[0])
+
+        // First month header so the user knows which month the range opens in.
+        gridItems.append(.monthHeader(monthFmt.string(from: daysInRange[0])))
+
+        // Leading empty cells so the first day lands on the right weekday column.
+        gridItems += Array(repeating: .empty, count: weekdayIndex(for: daysInRange[0]))
+
+        for date in daysInRange {
+            let month = cal.component(.month, from: date)
+
+            if month != currentMonth {
+                // Pad to the end of the current week row.
+                let pos = gridItems.count % 7
+                if pos > 0 {
+                    gridItems += Array(repeating: .empty, count: 7 - pos)
+                }
+                // Full-width month-name separator.
+                gridItems.append(.monthHeader(monthFmt.string(from: date)))
+                // Leading empties so the 1st of the new month lands correctly.
+                gridItems += Array(repeating: .empty, count: weekdayIndex(for: date))
+                currentMonth = month
+            }
+
+            gridItems.append(.day(date))
+        }
     }
 
     // MARK: - Layout
 
     private func setupUI() {
-        view.backgroundColor = .systemBackground
+        calendarHeightConstraint = calendarCollectionView.heightAnchor.constraint(equalToConstant: 400)
 
-        titleLabel.text = "\(meetup.type.icon) \(meetup.title)"
+        // Assemble calendar card
+        calendarCard.addSubview(legendStack)
+        calendarCard.addSubview(weekdayHeaderStack)
+        calendarCard.addSubview(calendarCollectionView)
 
-        let fmt = DateFormatter()
-        fmt.dateStyle = .medium
-        subtitleLabel.text = "\(fmt.string(from: meetup.startDateRange)) – \(fmt.string(from: meetup.endDateRange))"
-
-        calendarHeightConstraint = calendarCollectionView.heightAnchor.constraint(equalToConstant: 200)
-
-        view.addSubview(titleLabel)
-        view.addSubview(subtitleLabel)
-        view.addSubview(legendStack)
-        view.addSubview(weekdayHeaderStack)
-        view.addSubview(calendarCollectionView)
+        view.addSubview(backButton)
+        view.addSubview(progressStack)
+        view.addSubview(headlineLabel)
+        view.addSubview(subheadLabel)
+        view.addSubview(calendarCard)
         view.addSubview(submitButton)
 
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            backButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            backButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            backButton.widthAnchor.constraint(equalToConstant: 44),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
 
-            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
-            subtitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            subtitleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            progressStack.centerYAnchor.constraint(equalTo: backButton.centerYAnchor),
+            progressStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
 
-            legendStack.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 16),
-            legendStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            legendStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            headlineLabel.topAnchor.constraint(equalTo: backButton.bottomAnchor, constant: 16),
+            headlineLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            headlineLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
 
-            weekdayHeaderStack.topAnchor.constraint(equalTo: legendStack.bottomAnchor, constant: 14),
-            weekdayHeaderStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            weekdayHeaderStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            subheadLabel.topAnchor.constraint(equalTo: headlineLabel.bottomAnchor, constant: 4),
+            subheadLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            subheadLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+
+            // Calendar card
+            calendarCard.topAnchor.constraint(equalTo: subheadLabel.bottomAnchor, constant: 16),
+            calendarCard.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            calendarCard.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            calendarCard.bottomAnchor.constraint(equalTo: submitButton.topAnchor, constant: -8),
+
+            legendStack.topAnchor.constraint(equalTo: calendarCard.topAnchor, constant: 12),
+            legendStack.centerXAnchor.constraint(equalTo: calendarCard.centerXAnchor),
+
+            weekdayHeaderStack.topAnchor.constraint(equalTo: legendStack.bottomAnchor, constant: 8),
+            weekdayHeaderStack.leadingAnchor.constraint(equalTo: calendarCard.leadingAnchor, constant: 12),
+            weekdayHeaderStack.trailingAnchor.constraint(equalTo: calendarCard.trailingAnchor, constant: -12),
             weekdayHeaderStack.heightAnchor.constraint(equalToConstant: 20),
 
             calendarCollectionView.topAnchor.constraint(equalTo: weekdayHeaderStack.bottomAnchor, constant: 6),
-            calendarCollectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            calendarCollectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            calendarCollectionView.leadingAnchor.constraint(equalTo: calendarCard.leadingAnchor, constant: 12),
+            calendarCollectionView.trailingAnchor.constraint(equalTo: calendarCard.trailingAnchor, constant: -12),
             calendarHeightConstraint,
+            calendarCollectionView.bottomAnchor.constraint(equalTo: calendarCard.bottomAnchor, constant: -16),
 
             submitButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20),
-            submitButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            submitButton.widthAnchor.constraint(equalToConstant: 200),
-            submitButton.heightAnchor.constraint(equalToConstant: 50)
+            submitButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            submitButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            submitButton.heightAnchor.constraint(equalToConstant: 50),
         ])
     }
 
-    /// Recalculate the collection view height so it never scrolls.
-    private func updateCalendarHeight() {
-        guard calendarCollectionView.frame.width > 0 else { return }
-        let cellWidth  = (calendarCollectionView.frame.width - 6 * 4) / 7   // 7 columns, 4pt gaps
-        let cellHeight = cellWidth * 1.1
-        let lineSpacing: CGFloat = 6
-
-        let firstWeekday = weekdayIndex(for: daysInRange.first ?? Date())
-        let totalCells   = firstWeekday + daysInRange.count
-        let rows         = CGFloat(Int(ceil(Double(totalCells) / 7.0)))
-        let newHeight    = rows * (cellHeight + lineSpacing) - lineSpacing
-
-        if abs(calendarHeightConstraint.constant - newHeight) > 1 {
-            calendarHeightConstraint.constant = newHeight
-            view.layoutIfNeeded()
-        }
-    }
-
     // MARK: - Actions
+
+    @objc private func backTapped() {
+        NotificationCenter.default.post(name: .meetupGoBack, object: nil)
+    }
 
     @objc private func submitTapped() {
         let available   = daysInRange.filter { dayStates[$0] == .available }
@@ -227,18 +313,16 @@ class AvailabilityViewController: UIViewController {
 
         guard !available.isEmpty else {
             showAlert(title: "No Availability",
-                      message: "Please mark at least one day as available (green).")
+                      message: "Please mark at least one day as available.")
             return
         }
 
         let cal = Calendar.current
         let availableSlots = available.map { day -> TimeSlot in
-            let end = cal.date(byAdding: .day, value: 1, to: day)!
-            return TimeSlot(start: day, end: end)
+            TimeSlot(start: day, end: cal.date(byAdding: .day, value: 1, to: day)!)
         }
         let busySlots = unavailable.map { day -> TimeSlot in
-            let end = cal.date(byAdding: .day, value: 1, to: day)!
-            return TimeSlot(start: day, end: end)
+            TimeSlot(start: day, end: cal.date(byAdding: .day, value: 1, to: day)!)
         }
 
         let availability = UserAvailability(
@@ -248,43 +332,54 @@ class AvailabilityViewController: UIViewController {
             busySlots: busySlots,
             responseDate: Date()
         )
-        delegate?.didSubmitAvailability(availability)
+
+        UIView.animate(withDuration: 0.1, animations: {
+            self.submitButton.transform = CGAffineTransform(scaleX: 0.97, y: 0.97)
+        }) { _ in
+            UIView.animate(withDuration: 0.1) { self.submitButton.transform = .identity }
+            self.delegate?.didSubmitAvailability(availability)
+        }
     }
 
     // MARK: - Helpers
 
     private func showAlert(title: String, message: String) {
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
-        present(alert, animated: true)
+        let a = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        a.addAction(UIAlertAction(title: "OK", style: .default))
+        present(a, animated: true)
     }
 
-    /// Returns 0-based Sunday-first weekday index for a given date.
     private func weekdayIndex(for date: Date) -> Int {
-        let cal = Calendar.current
-        return (cal.component(.weekday, from: date) - 1)  // 1=Sun → 0
+        (Calendar.current.component(.weekday, from: date) - 1)
     }
 
-    private static func legendDot(color: UIColor, text: String) -> UIView {
+    private func makeDot(filled: Bool) -> UIView {
+        let v = UIView()
+        v.backgroundColor = filled ? Self.blue : UIColor.systemGray4
+        let size: CGFloat = filled ? 8 : 6
+        v.layer.cornerRadius = size / 2
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.widthAnchor.constraint(equalToConstant: size).isActive = true
+        v.heightAnchor.constraint(equalToConstant: size).isActive = true
+        return v
+    }
+
+    private static func legendItem(color: UIColor, text: String) -> UIView {
         let dot = UIView()
         dot.backgroundColor = color
-        dot.layer.cornerRadius = 6
+        dot.layer.cornerRadius = 5
         dot.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            dot.widthAnchor.constraint(equalToConstant: 12),
-            dot.heightAnchor.constraint(equalToConstant: 12)
-        ])
+        dot.widthAnchor.constraint(equalToConstant: 10).isActive = true
+        dot.heightAnchor.constraint(equalToConstant: 10).isActive = true
 
         let label = UILabel()
         label.text = text
-        label.font = .systemFont(ofSize: 12)
-        label.textColor = .secondaryLabel
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .label
 
-        let stack = UIStackView(arrangedSubviews: [dot, label])
-        stack.axis = .horizontal
-        stack.spacing = 5
-        stack.alignment = .center
-        return stack
+        let sv = UIStackView(arrangedSubviews: [dot, label])
+        sv.axis = .horizontal; sv.spacing = 6; sv.alignment = .center
+        return sv
     }
 }
 
@@ -292,47 +387,49 @@ class AvailabilityViewController: UIViewController {
 
 extension AvailabilityViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
 
-    /// Total items = leading empty cells (to align first day to correct weekday) + actual days
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        let offset = weekdayIndex(for: daysInRange.first ?? Date())
-        return offset + daysInRange.count
+    func collectionView(_ collectionView: UICollectionView,
+                        numberOfItemsInSection section: Int) -> Int {
+        gridItems.count
     }
 
     func collectionView(_ collectionView: UICollectionView,
                         cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(
-            withReuseIdentifier: CalendarDayCell.reuseID, for: indexPath) as! CalendarDayCell
-        let offset = weekdayIndex(for: daysInRange.first ?? Date())
-        let dayIndex = indexPath.item - offset
+        switch gridItems[indexPath.item] {
+        case .empty:
+            let cell = collectionView.dequeueReusableCell(
+                withReuseIdentifier: CalendarDayCell.reuseID, for: indexPath) as! CalendarDayCell
+            cell.configureEmpty()
+            return cell
 
-        if dayIndex < 0 {
-            cell.configureEmpty()   // blank padding cell
-        } else {
-            let date = daysInRange[dayIndex]
-            cell.configure(with: date, state: dayStates[date] ?? .neutral)
+        case .day(let date):
+            let cell = collectionView.dequeueReusableCell(
+                withReuseIdentifier: CalendarDayCell.reuseID, for: indexPath) as! CalendarDayCell
+            cell.configure(with: date, state: dayStates[date] ?? .available)
+            return cell
+
+        case .monthHeader(let name):
+            let cell = collectionView.dequeueReusableCell(
+                withReuseIdentifier: MonthHeaderCell.reuseID, for: indexPath) as! MonthHeaderCell
+            cell.configure(month: name)
+            return cell
         }
-        return cell
     }
 
     func collectionView(_ collectionView: UICollectionView,
                         layout collectionViewLayout: UICollectionViewLayout,
                         sizeForItemAt indexPath: IndexPath) -> CGSize {
-        let width = (collectionView.frame.width - 6 * 4) / 7
-        return CGSize(width: width, height: width * 1.1)
+        // Month headers span the full collection-view width.
+        if case .monthHeader = gridItems[indexPath.item] {
+            return CGSize(width: collectionView.bounds.width, height: 32)
+        }
+        let side = (collectionView.bounds.width - 6 * 4) / 7
+        return CGSize(width: side, height: side * 1.1)
     }
 
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let offset = weekdayIndex(for: daysInRange.first ?? Date())
-        let dayIndex = indexPath.item - offset
-        guard dayIndex >= 0 else { return }
-
-        let date = daysInRange[dayIndex]
-        switch dayStates[date] ?? .available {
-        case .neutral, .unavailable:
-            dayStates[date] = .available
-        case .available:
-            dayStates[date] = .unavailable
-        }
+    func collectionView(_ collectionView: UICollectionView,
+                        didSelectItemAt indexPath: IndexPath) {
+        guard case .day(let date) = gridItems[indexPath.item] else { return }
+        dayStates[date] = (dayStates[date] == .available) ? .unavailable : .available
         collectionView.reloadItems(at: [indexPath])
     }
 }
@@ -343,7 +440,7 @@ class CalendarDayCell: UICollectionViewCell {
 
     static let reuseID = "CalendarDayCell"
 
-    private let dayLabel: UILabel = {          // e.g. "Mon"
+    private let dayLabel: UILabel = {
         let l = UILabel()
         l.font = .systemFont(ofSize: 10, weight: .medium)
         l.textAlignment = .center
@@ -351,7 +448,7 @@ class CalendarDayCell: UICollectionViewCell {
         return l
     }()
 
-    private let dateLabel: UILabel = {         // e.g. "14"
+    private let dateLabel: UILabel = {
         let l = UILabel()
         l.font = .systemFont(ofSize: 15, weight: .semibold)
         l.textAlignment = .center
@@ -361,7 +458,7 @@ class CalendarDayCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.layer.cornerRadius = 8
+        contentView.layer.cornerRadius = 10
         contentView.clipsToBounds = true
         contentView.addSubview(dayLabel)
         contentView.addSubview(dateLabel)
@@ -369,19 +466,17 @@ class CalendarDayCell: UICollectionViewCell {
             dayLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 5),
             dayLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
             dayLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
-
             dateLabel.topAnchor.constraint(equalTo: dayLabel.bottomAnchor, constant: 2),
             dateLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
             dateLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
-            dateLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -5)
+            dateLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -5),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     func configureEmpty() {
-        dayLabel.text = nil
-        dateLabel.text = nil
+        dayLabel.text = nil; dateLabel.text = nil
         contentView.backgroundColor = .clear
     }
 
@@ -393,10 +488,6 @@ class CalendarDayCell: UICollectionViewCell {
         dateLabel.text = fmt.string(from: date)
 
         switch state {
-        case .neutral:
-            contentView.backgroundColor = .systemGray6
-            dayLabel.textColor  = .secondaryLabel
-            dateLabel.textColor = .label
         case .available:
             contentView.backgroundColor = .systemGreen
             dayLabel.textColor  = .white
@@ -406,5 +497,66 @@ class CalendarDayCell: UICollectionViewCell {
             dayLabel.textColor  = .white
             dateLabel.textColor = .white
         }
+    }
+}
+
+// MARK: - MonthHeaderCell
+
+/// Full-width separator row that shows the month name between two hairlines.
+class MonthHeaderCell: UICollectionViewCell {
+
+    static let reuseID = "MonthHeaderCell"
+
+    private let leftLine: UIView = {
+        let v = UIView()
+        v.backgroundColor = UIColor.systemGray4
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
+    private let monthLabel: UILabel = {
+        let l = UILabel()
+        l.font          = UIFont.systemFont(ofSize: 12, weight: .semibold)
+        l.textColor     = UIColor(red: 0.22, green: 0.58, blue: 1.0, alpha: 1)
+        l.textAlignment = .center
+        l.setContentHuggingPriority(.required, for: .horizontal)
+        l.translatesAutoresizingMaskIntoConstraints = false
+        return l
+    }()
+
+    private let rightLine: UIView = {
+        let v = UIView()
+        v.backgroundColor = UIColor.systemGray4
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.backgroundColor = .clear
+        contentView.addSubview(leftLine)
+        contentView.addSubview(monthLabel)
+        contentView.addSubview(rightLine)
+
+        NSLayoutConstraint.activate([
+            monthLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            monthLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+
+            leftLine.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            leftLine.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
+            leftLine.trailingAnchor.constraint(equalTo: monthLabel.leadingAnchor, constant: -10),
+            leftLine.heightAnchor.constraint(equalToConstant: 1),
+
+            rightLine.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            rightLine.leadingAnchor.constraint(equalTo: monthLabel.trailingAnchor, constant: 10),
+            rightLine.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+            rightLine.heightAnchor.constraint(equalToConstant: 1),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(month: String) {
+        monthLabel.text = month
     }
 }
